@@ -28,7 +28,6 @@ let simulatedState = {
         defaultGateway: '192.168.1.1', 
         dnsServers: ['8.8.8.8', '1.1.1.1'] 
     },
-    // Ensure these are initialized for levels that might use them
     simulatedProcesses: [], 
     simulatedServices: {},
     simulatedArchives: {},
@@ -77,7 +76,7 @@ const commandDefinitions = {
     traceroute: { description: "Route des paquets.", usage: "traceroute [opts] host" },
     nslookup: { description: "Interroge DNS.", usage: "nslookup host [server]" },
     dig: { description: "Recherche DNS.", usage: "dig [@srv] name [type]" },
-    nmap: { description: "Scan réseau/ports.", usage: "nmap [scan] [opts] {cible}" , options: [{flag:"-p PORTS", description:"Ports."},{flag:"-sV", description:"Version (simul)."}]}
+    nmap: { description: "Scan réseau/ports.", usage: "nmap [scan type] [options] {cible}", options: [{flag:"-p PORTS", description:"Ports à scanner (ex: 22,80,443)."},{flag:"-sV", description:"Sonde les ports ouverts pour déterminer service/version info."}]}
 };
 
 function simpleIndent(text, indentLevel = 1) {
@@ -85,7 +84,7 @@ function simpleIndent(text, indentLevel = 1) {
 }
 
 function wrapText(text, maxWidth) {
-    if (maxWidth <= 0 || !text || text.length <= maxWidth) return text ? [text] : [""]; // Handle null/undefined text
+    if (maxWidth <= 0 || !text || text.length <= maxWidth) return text ? [text] : [""];
     const words = text.split(' ');
     const lines = []; let currentLine = "";
     for (const word of words) {
@@ -96,15 +95,15 @@ function wrapText(text, maxWidth) {
         else { lines.push(currentLine); currentLine = word; }
     }
     if (currentLine.length > 0) lines.push(currentLine);
-    return lines.length > 0 ? lines : [""]; // Ensure array with at least empty string if text was empty
+    return lines.length > 0 ? lines : [""];
 }
 
 self.onmessage = async ({ data }) => {
-    console.log('Worker received:', data.type, data); // Keep for debugging
+    console.log('Worker received:', data.type, data);
     switch (data.type) {
         case 'loadLevel':
             await loadLevel(data.levelId);
-            if (simulatedState.currentLevel) { // Check if level actually loaded
+            if (simulatedState.currentLevel) {
                 const objectivesForUI = (simulatedState.currentLevel.objectives || []).map(obj => ({ id: obj.id, description: obj.description }));
                 self.postMessage({
                     type: 'levelLoaded', levelId: simulatedState.currentLevel.id, levelName: simulatedState.currentLevel.name,
@@ -112,7 +111,6 @@ self.onmessage = async ({ data }) => {
                     newPrompt: buildPromptString(simulatedState.session), simulatedCwd: [...simulatedState.session.cwd]
                 });
             } else { 
-                // If level failed to load, simulatedState.currentLevel would be null
                 self.postMessage({ type: 'output', output: `Erreur Critique: Impossible de charger la configuration du niveau "${data.levelId}". Vérifiez la console du worker.\n`, speed: 0, newPrompt: '$ ', simulatedCwd: [''] });
             }
             break;
@@ -121,15 +119,19 @@ self.onmessage = async ({ data }) => {
             self.postMessage({ type: 'output', output: result.output, speed: result.speed, newPrompt: buildPromptString(simulatedState.session), simulatedCwd: [...simulatedState.session.cwd] });
             const baseCmd = data.command.trim().split(/\s+/)[0];
             const clientCmds = ['clear', 'menu', 'resetLevel']; 
-            if (simulatedState.currentLevel && !clientCmds.includes(baseCmd)) checkLevelObjectives();
+            if (simulatedState.currentLevel && !clientCmds.includes(baseCmd)) {
+                checkLevelObjectives(result.output); // MODIFIED: Pass command output
+            }
             break;
         case 'getCompletionCandidates':
             self.postMessage({ type: 'completionCandidates', buffer: data.buffer, candidates: getCompletionCandidates(data.buffer, data.cwd || simulatedState.session.cwd) });
             break;
         case 'resetLevel':
             if (simulatedState.currentLevel) {
-                await loadLevel(simulatedState.currentLevel.id); // Reload current level
+                await loadLevel(simulatedState.currentLevel.id);
                 self.postMessage({ type: 'output', output: 'Niveau réinitialisé.\n', speed: 0, newPrompt: buildPromptString(simulatedState.session), simulatedCwd: [...simulatedState.session.cwd] });
+                // After reset, also check objectives in case initial state fulfills some
+                checkLevelObjectives(); // Check objectives on reset
             } else { self.postMessage({ type: 'output', output: 'Aucun niveau à réinitialiser.\n', speed: 0, newPrompt: '$ ', simulatedCwd: [''] }); }
             break;
         default: console.warn('Worker: Unhandled type', data.type, data);
@@ -137,18 +139,17 @@ self.onmessage = async ({ data }) => {
 };
 
 async function loadLevel(levelId) {
-    simulatedState.currentLevel = null; // Reset currentLevel before attempting to load
+    simulatedState.currentLevel = null;
     try {
         const levelModule = await import(`./missions_linux/${levelId}.js`);
         const cfg = levelModule.levelConfig;
 
         if (!cfg || !cfg.initialState || !cfg.initialState.fileSystem || !cfg.initialState.session) {
             console.error(`Level config for "${levelId}" is invalid or missing critical initialState properties.`);
-            simulatedState.currentLevel = null; // Ensure it stays null
-            return; // Stop loading
+            simulatedState.currentLevel = null; 
+            return;
         }
 
-        // Deep clone initial state to prevent modifications affecting reloads
         simulatedState.fileSystem = JSON.parse(JSON.stringify(cfg.initialState.fileSystem));
         simulatedState.fileSystem.owner = simulatedState.fileSystem.owner || 'root';
         simulatedState.fileSystem.group = simulatedState.fileSystem.group || 'root';
@@ -156,11 +157,10 @@ async function loadLevel(levelId) {
 
         simulatedState.session = JSON.parse(JSON.stringify(cfg.initialState.session));
         
-        simulatedState.currentLevel = cfg; // Store the original config for reload reference
+        simulatedState.currentLevel = cfg;
         simulatedState.objectivesCompleted = [];
         simulatedState.session.filesRead = []; 
         
-        // Safely initialize network, process, service, archive states
         simulatedState.networkState = JSON.parse(JSON.stringify(cfg.initialState.networkState || { hosts: {} , defaultGateway: '192.168.1.1', dnsServers: ['8.8.8.8']}));
         simulatedState.simulatedProcesses = JSON.parse(JSON.stringify(cfg.initialState.simulatedProcesses || []));
         simulatedState.simulatedServices = JSON.parse(JSON.stringify(cfg.initialState.simulatedServices || {}));
@@ -171,22 +171,27 @@ async function loadLevel(levelId) {
         simulatedState.session.groups = simulatedState.session.groups || [defaultUser === 'root' ? 'root' : defaultUser, 'users'];
         
         console.log(`Level "${levelId}" loaded successfully.`);
+        // Check objectives after loading, in case initial state fulfills some
+        checkLevelObjectives();
+
     } catch (error) { 
         console.error(`Failed to load level "${levelId}":`, error);
-        simulatedState.currentLevel = null; // Ensure reset on error
+        simulatedState.currentLevel = null;
     }
 }
 
-function checkLevelObjectives() { 
+// MODIFIED: Added lastCommandOutput parameter with a default value
+function checkLevelObjectives(lastCommandOutput = null) { 
     if (!simulatedState.currentLevel || !Array.isArray(simulatedState.currentLevel.objectives)) return;
     simulatedState.currentLevel.objectives.forEach(obj => {
         if (!obj || typeof obj.check !== 'function') { console.warn("Invalid objective found in level config:", obj); return; }
         if (!simulatedState.objectivesCompleted.includes(obj.id)) {
             try {
-                if (obj.check(JSON.parse(JSON.stringify(simulatedState)))) { 
+                // MODIFIED: Pass lastCommandOutput to the check function
+                if (obj.check(JSON.parse(JSON.stringify(simulatedState)), lastCommandOutput)) { 
                     simulatedState.objectivesCompleted.push(obj.id);
                     self.postMessage({ type: 'objectiveComplete', objectiveId: obj.id, message: obj.message || 'Objectif atteint !' });
-                    checkIfLevelComplete(); // Check win condition after each objective completion
+                    checkIfLevelComplete();
                 }
             } catch (e) { console.error(`Error checking objective ${obj.id} for level ${simulatedState.currentLevel.id}:`, e); }
         }
@@ -197,20 +202,18 @@ function checkIfLevelComplete() {
     if (!simulatedState.currentLevel) return;
     const { objectives, winCondition, name: levelName, id: levelId } = simulatedState.currentLevel;
     
-    // Ensure objectives is an array before trying to check its length or content
     const allObjectivesActuallyInLevel = Array.isArray(objectives) && objectives.length > 0;
     const allObjectivesMetByPlayer = allObjectivesActuallyInLevel && 
                                      simulatedState.objectivesCompleted.length === objectives.length &&
                                      objectives.every(obj => simulatedState.objectivesCompleted.includes(obj.id));
     
     let winCondMet = false;
-    if (!Array.isArray(winCondition) || winCondition.length === 0) { // If no explicit winCondition, all objectives must be met
+    if (!Array.isArray(winCondition) || winCondition.length === 0) {
         winCondMet = allObjectivesMetByPlayer;
-    } else { // If winCondition is specified, only those need to be met
+    } else {
         winCondMet = winCondition.every(id => simulatedState.objectivesCompleted.includes(id));
     }
     
-    // Ensure at least one objective was part of the win condition or all objectives were met if no win condition
     if (winCondMet && ( (Array.isArray(winCondition) && winCondition.length > 0) || allObjectivesMetByPlayer) ) { 
         self.postMessage({ type: 'levelComplete', levelId, message: `Félicitations ! Mission "${levelName}" accomplie.` });
     }
@@ -222,7 +225,7 @@ function resolvePath(currentDirArray, targetPathStr) {
     if (targetPathStr === '~') return [...(simulatedState.session.home || ['home', simulatedState.session.user || 'user'])];
     
     let resolved = targetPathStr.startsWith('/') ? [] : [...currentDirArray.filter(p => p)];
-    const parts = targetPathStr.split('/').filter(p => p && p !== '.'); // Filter empty strings and current dir symbol
+    const parts = targetPathStr.split('/').filter(p => p && p !== '.');
 
     for (const part of parts) {
         if (part === '..') { 
@@ -231,27 +234,25 @@ function resolvePath(currentDirArray, targetPathStr) {
             resolved.push(part);
         }
     }
-    return resolved.length === 0 ? [''] : resolved; // Root is always represented as ['']
+    return resolved.length === 0 ? [''] : resolved;
 }
 
 function findNode(fsRoot, pathArray) {
     let currentNode = fsRoot;
-    // Normalize pathArray: if it's effectively asking for root (e.g., [''] or []), return fsRoot
     if (!Array.isArray(pathArray) || pathArray.length === 0 || (pathArray.length === 1 && pathArray[0] === '')) {
         return fsRoot; 
     }
     
-    // Filter out initial empty string if path was absolute, e.g., ['','foo'] -> ['foo']
     const searchParts = pathArray[0] === '' ? pathArray.slice(1).filter(p => p) : pathArray.filter(p => p);
 
-    if (searchParts.length === 0 && pathArray[0] === '') return fsRoot; // Path was just "/"
+    if (searchParts.length === 0 && pathArray[0] === '') return fsRoot;
 
     for (const part of searchParts) {
         if (!currentNode || currentNode.type !== 'directory' || !Array.isArray(currentNode.children)) {
-            return null; // Cannot traverse further
+            return null;
         }
         const nextNode = currentNode.children.find(child => child.name === part);
-        if (!nextNode) return null; // Part not found
+        if (!nextNode) return null;
         currentNode = nextNode;
     }
     return currentNode;
@@ -259,9 +260,9 @@ function findNode(fsRoot, pathArray) {
 
 function checkPermissions(user, node, action) {
     if (!node) return false; 
-    if (user === 'root') return true; // Root has all permissions
+    if (user === 'root') return true;
 
-    const perms = node.permissions || "----------"; // Default to no permissions if undefined
+    const perms = node.permissions || "----------"; 
     if (perms.length !== 10) { console.warn(`Invalid permissions string for ${node.name}: ${perms}`); return false; }
 
     let relevantSet;
@@ -270,11 +271,11 @@ function checkPermissions(user, node, action) {
     const userGroups = simulatedState.session.groups || [];
 
     if (nodeOwner === user) {
-        relevantSet = perms.substring(1, 4); // Owner permissions rwx
+        relevantSet = perms.substring(1, 4);
     } else if (userGroups.includes(nodeGroup)) {
-        relevantSet = perms.substring(4, 7); // Group permissions rwx
+        relevantSet = perms.substring(4, 7);
     } else {
-        relevantSet = perms.substring(7, 10); // Others permissions rwx
+        relevantSet = perms.substring(7, 10);
     }
 
     switch (action) {
@@ -286,28 +287,25 @@ function checkPermissions(user, node, action) {
 }
 
 function buildPromptString(session) {
-    if (!session || !session.cwd) return '$ '; // Fallback prompt
+    if (!session || !session.cwd) return '$ ';
     const pathParts = (session.cwd[0] === '' && session.cwd.length > 1) ? session.cwd.slice(1) : session.cwd;
     let displayPath = '/' + pathParts.filter(p => p).join('/');
     if (displayPath === "/" && pathParts.length > 0 && pathParts.filter(p=>p).length > 0 && pathParts[0] !== '') {
-        // This case handles if pathParts was like ['foo'] resulting in '//foo', should be '/foo'
         displayPath = '/' + pathParts.filter(p => p).join('/');
-    } else if (displayPath === "/" && pathParts.length === 0 ) { // cwd was ['']
+    } else if (displayPath === "/" && pathParts.length === 0 ) {
          displayPath = "/";
-    } else if (displayPath === "" && pathParts.length === 1 && pathParts[0] === "") { // cwd was ['']
+    } else if (displayPath === "" && pathParts.length === 1 && pathParts[0] === "") {
         displayPath = "/";
     }
-
-
     const symbol = (session.user === 'root') ? '#' : '$';
     return `${session.user || 'user'}@${session.host || 'local'}:${displayPath}${symbol}`;
 }
 
 const findHostInNetwork = (identifier) => { 
     if (!simulatedState.networkState || !simulatedState.networkState.hosts) return null;
-    for (const hostKey in simulatedState.networkState.hosts) { // Use hostKey as identifier might be an IP/domain
+    for (const hostKey in simulatedState.networkState.hosts) {
         const hostData = simulatedState.networkState.hosts[hostKey];
-        if (hostKey === identifier) return {name: hostKey, ...hostData}; // Match by config key
+        if (hostKey === identifier) return {name: hostKey, ...hostData};
         if (hostData.ips && hostData.ips.includes(identifier)) return {name: hostKey, ...hostData};
         if (hostData.domainNames && hostData.domainNames.includes(identifier)) return {name: hostKey, ...hostData};
     } return null;
@@ -318,26 +316,36 @@ function runCommand(cmdStr) {
     const baseCmd = parts[0];
     let args = parts.slice(1);
     let output = "";
-    const speed = 0; // All commands are instant
+    const speed = 0;
 
     if (!baseCmd) return { output, speed };
     const cmdDef = commandDefinitions[baseCmd];
 
-    if ((args.includes('--help') || args.includes('-h')) && cmdDef) {
-        output = `Usage: ${cmdDef.usage}\n${cmdDef.description}\n`;
-        if (cmdDef.options && Array.isArray(cmdDef.options)) { // Check if options exist and is an array
-            output += 'Options:\n';
-            cmdDef.options.forEach(o => { output += `  ${o.flag}\n${simpleIndent(o.description,1)}\n`; });
+    if (args.includes('--help')) { // Simplified help check for any command
+        if (cmdDef) {
+            output = `Usage: ${cmdDef.usage}\n${cmdDef.description}\n`;
+            if (cmdDef.options && Array.isArray(cmdDef.options)) {
+                output += 'Options:\n';
+                cmdDef.options.forEach(o => { output += `  ${o.flag}\n${simpleIndent(o.description,1)}\n`; });
+            }
+            return { output, speed };
+        } else {
+            // If --help on a non-defined command, could fall through to "command not found" or show generic help
         }
-        return { output, speed };
     }
-
-    // --- SWITCH STATEMENT FOR ALL COMMANDS ---
-    // (This will be the large switch block from the previous response,
-    // ensure it's correctly placed and complete with all cases)
+    
     switch (baseCmd) {
         case 'help':
-            if (args.length > 0 && commandDefinitions[args[0]]) return runCommand(`${args[0]} --help`);
+            if (args.length > 0 && commandDefinitions[args[0]]) {
+                 // Use the --help logic from above by re-crafting the call
+                 const helpCmdDef = commandDefinitions[args[0]];
+                 output = `Usage: ${helpCmdDef.usage}\n${helpCmdDef.description}\n`;
+                 if (helpCmdDef.options && Array.isArray(helpCmdDef.options)) {
+                     output += 'Options:\n';
+                     helpCmdDef.options.forEach(o => { output += `  ${o.flag}\n${simpleIndent(o.description,1)}\n`; });
+                 }
+                 return { output, speed };
+            }
             output = 'Commands available (simulated):\n';
             const cmdNames = Object.keys(commandDefinitions);
             let maxLen = 0; cmdNames.forEach(n => { if (n.length > maxLen) maxLen = n.length; });
@@ -354,7 +362,7 @@ function runCommand(cmdStr) {
                     for (let k = 1; k < wrapped.length; k++) output += `${descIndent}${wrapped[k]}\n`;
                 } else output += `${cmdPart}\n`;
             });
-            output += '\nNote: This is a simulation.\n';
+            output += '\nNote: This is a simulation. Type \'[commande] --help\' for specific command help.\n';
             break;
         case 'pwd':
             let currentPathPartsPwd = simulatedState.session.cwd || [''];
@@ -388,7 +396,7 @@ function runCommand(cmdStr) {
                     const links = item.type === 'directory' ? (item.children ? item.children.length + 2 : 2) : 1;
                     const owner = item.owner || 'unknown'; const group = item.group || 'unknown';
                     let size = (item.type === 'file') ? (item.content ? item.content.length : 0) : 4096;
-                    totalBlocks += Math.ceil(size / 512); // Simplified block calculation
+                    totalBlocks += Math.ceil(size / 512);
                     const date = "Jan 01 00:00"; 
                     let nameDisplay = item.name;
                     if (item.type === 'directory') nameDisplay = `\x1b[1;34m${item.name}\x1b[0m`;
@@ -398,7 +406,7 @@ function runCommand(cmdStr) {
                         if (size >= 1024*1024*1024) sizeDisplay = (size / (1024*1024*1024)).toFixed(1) + 'G';
                         else if (size >= 1024*1024) sizeDisplay = (size / (1024*1024)).toFixed(1) + 'M';
                         else if (size >= 1024) sizeDisplay = (size / 1024).toFixed(1) + 'K';
-                        else sizeDisplay = String(size) + 'B'; // Add B for bytes if less than K
+                        else sizeDisplay = String(size) + 'B';
                     }
                     return `${perms} ${String(links).padStart(2)} ${owner.padEnd(8)} ${group.padEnd(8)} ${sizeDisplay.padStart(6)} ${date} ${nameDisplay}`;
                 });
@@ -433,7 +441,7 @@ function runCommand(cmdStr) {
                 else if (!checkPermissions(simulatedState.session.user, fileNode, 'read')) output += `cat: ${filePath}: Permission denied\n`;
                 else {
                     output += (fileNode.content || '');
-                    if (fileNode.content && !fileNode.content.endsWith('\n')) output += '\n'; // Add trailing newline if content doesn't have one
+                    if (fileNode.content && !fileNode.content.endsWith('\n')) output += '\n';
                     
                     let absPathParts = resolvedCatPath[0] === '' ? resolvedCatPath.slice(1) : resolvedCatPath;
                     const absPath = '/' + absPathParts.filter(p => p).join('/');
@@ -445,7 +453,7 @@ function runCommand(cmdStr) {
             const patternArg = args.find(arg => !arg.startsWith("-"));
             const optionsGrep = args.filter(arg => arg.startsWith("-"));
             const filesToGrep = args.filter(arg => !arg.startsWith("-") && arg !== patternArg);
-            if (!patternArg || filesToGrep.length === 0 && !cmdStr.includes("|")) { // Allow grep without file if piping (not implemented here)
+            if (!patternArg || filesToGrep.length === 0 && !cmdStr.includes("|")) {
                  output = "Usage: grep [OPTIONS] PATTERN [FILE...]\n"; break; 
             }
             const ignoreCase = optionsGrep.includes("-i"); const invertMatch = optionsGrep.includes("-v"); const showLineNumbers = optionsGrep.includes("-n");
@@ -465,7 +473,6 @@ function runCommand(cmdStr) {
                         } else output += `grep: ${f}: No such file or directory or permission denied\n`;
                     });
                 } else {
-                    // TODO: Handle grep from standard input if no files (requires pipe simulation)
                     output = "grep: (standard input simulation not implemented without files)\n";
                 }
             } catch (e) { output = `grep: Invalid regular expression: ${e.message}\n`; }
@@ -473,9 +480,9 @@ function runCommand(cmdStr) {
         case 'whoami': output = simulatedState.session.user + '\n'; break;
         case 'id':
             const targetUserId = args[0] || simulatedState.session.user;
-            if (targetUserId === simulatedState.session.user || targetUserId === 'root' || findHostInNetwork(targetUserId)) { // Simplified user check or existing host
+            if (targetUserId === simulatedState.session.user || targetUserId === 'root' || findHostInNetwork(targetUserId)) {
                 const isRoot = targetUserId === 'root';
-                const uid = isRoot ? 0 : (simulatedState.session.user === targetUserId ? 1000 : 1001); // Different UID for other users
+                const uid = isRoot ? 0 : (simulatedState.session.user === targetUserId ? 1000 : 1001);
                 const userGroups = isRoot ? ['root'] : (targetUserId === simulatedState.session.user ? (simulatedState.session.groups || ['users']) : ['users']);
                 const primaryGroupName = userGroups[0];
                 const primaryGid = primaryGroupName === 'root' ? 0 : (primaryGroupName === simulatedState.session.user ? 1000 : 1001) ;
@@ -488,7 +495,7 @@ function runCommand(cmdStr) {
             if (args.length === 0) { output = "touch: missing file operand\n"; break; }
             args.forEach(filePath => {
                 const resolvedPathArr = resolvePath(simulatedState.session.cwd, filePath);
-                if (resolvedPathArr.length === 1 && resolvedPathArr[0] === '') { output += `touch: cannot touch '/': Is a directory\n`; return; } // Cannot touch root
+                if (resolvedPathArr.length === 1 && resolvedPathArr[0] === '') { output += `touch: cannot touch '/': Is a directory\n`; return; }
                 const fileName = resolvedPathArr[resolvedPathArr.length - 1];
                 const parentPathArr = resolvedPathArr.slice(0, -1);
                 if (!fileName) { output += `touch: invalid file name '${filePath}'\n`; return; }
@@ -499,7 +506,7 @@ function runCommand(cmdStr) {
                 if (existingNode && existingNode.type === 'directory') { output += `touch: cannot touch '${filePath}': Is a directory\n`; }
                 else if (!existingNode) {
                     parentNode.children.push({ name: fileName, type: 'file', permissions: '-rw-r--r--', owner: simulatedState.session.user, group: (simulatedState.session.groups||[])[0] || 'users', content: '' });
-                } // Else: file exists, timestamp "updated" (not visually simulated here)
+                }
             });
             break;
         case 'mkdir':
@@ -511,7 +518,6 @@ function runCommand(cmdStr) {
                 const partsToProcess = dirPath.startsWith('/') ? dirPath.split('/').filter(p=>p) : [...simulatedState.session.cwd.filter(p=>p), ...dirPath.split('/').filter(p=>p)];
                 if (partsToProcess.length === 0 && dirPath === '/') { output += `mkdir: cannot create directory '/': File exists\n`; return;}
 
-
                 for (let i = 0; i < partsToProcess.length; i++) {
                     const part = partsToProcess[i];
                     if (!part) continue; 
@@ -519,9 +525,8 @@ function runCommand(cmdStr) {
                     let node = findNode(simulatedState.fileSystem, pathBeingBuiltAbs);
                     if (node) {
                         if (node.type !== 'directory') { output += `mkdir: cannot create directory ‘${dirPath}’: File exists at ‘/${pathBeingBuiltAbs.join('/')}’\n`; return; }
-                        currentParentNode = node; // For next iteration's permission check
+                        currentParentNode = node;
                     } else {
-                        // Find the immediate parent for permission check and adding child
                         const immediateParentPath = pathBeingBuiltAbs.slice(0, -1);
                         const immediateParentNode = findNode(simulatedState.fileSystem, immediateParentPath.length === 0 ? [''] : immediateParentPath);
 
@@ -530,7 +535,7 @@ function runCommand(cmdStr) {
                         
                         const newDir = { name: part, type: 'directory', permissions: 'drwxr-xr-x', owner: simulatedState.session.user, group: (simulatedState.session.groups||[])[0] || 'users', children: [] };
                         immediateParentNode.children.push(newDir);
-                        currentParentNode = newDir; // This new dir is the parent for the next part
+                        currentParentNode = newDir;
                     }
                 }
             });
@@ -556,31 +561,82 @@ function runCommand(cmdStr) {
                 const relevantLines = baseCmd === 'head' ? lines.slice(0, numLinesHT) : lines.slice(-numLinesHT);
                 output = relevantLines.join('\n');
                 if (relevantLines.length > 0 && (nodeHT.content.endsWith('\n') || relevantLines.join('\n') !== nodeHT.content )) {
-                     output += '\n'; // Add trailing newline if original had it, or if showing partial and it wasn't the very end
+                     output += '\n';
                 }
             }
             break;
         case 'man':
             if (args.length === 0) { output = "What manual page do you want?\n"; break; }
-            const manCmdName = args[0]; const manDef = commandDefinitions[manCmdName];
-            if (manDef) {
-                output = `${manCmdName.toUpperCase()}(1) User Commands ${manCmdName.toUpperCase()}(1)\n\nNAME\n    ${manCmdName} - ${manDef.description}\n\nSYNOPSIS\n    ${manDef.usage}\n`;
-                if (manDef.options && manDef.options.length > 0) {
+            const manCmdName = args[0]; const manDefResolved = commandDefinitions[manCmdName]; // Use a different var name
+            if (manDefResolved) {
+                output = `${manCmdName.toUpperCase()}(1) User Commands ${manCmdName.toUpperCase()}(1)\n\nNAME\n    ${manCmdName} - ${manDefResolved.description}\n\nSYNOPSIS\n    ${manDefResolved.usage}\n`;
+                if (manDefResolved.options && manDefResolved.options.length > 0) {
                     output += "\nOPTIONS\n";
-                    manDef.options.forEach(opt => { output += `    ${opt.flag}\n        ${opt.description}\n`; });
+                    manDefResolved.options.forEach(opt => { output += `    ${opt.flag}\n        ${opt.description}\n`; });
                 }
             } else output = `No manual entry for ${manCmdName}\n`;
             break;
-        // ... (The rest of your runCommand switch cases: find, ps, kill, systemctl, tar, unzip, network commands, default)
-        // Ensure to copy them from the previous "File 1: sim-engine.js (The Most Complete Version from Previous Response)"
-        // For brevity, I'm not repeating all of them here, but they are ESSENTIAL.
+        case 'nmap':
+            const targetNmapArg = args.find(arg => !arg.startsWith('-') && arg !== '-sV'); // -sV is an option, not a target
+            const showVersion = args.includes('-sV');
+            let portsToScan = [];
+            const pOptionIndex = args.indexOf('-p');
+            if (pOptionIndex !== -1 && args[pOptionIndex + 1]) {
+                portsToScan = args[pOptionIndex + 1].split(',').map(p => parseInt(p.trim())).filter(p => !isNaN(p));
+            }
 
-        // Placeholder for the rest of the commands that were in the previous full sim-engine.js
-        // You would copy all the case blocks from 'find' through 'nmap' and the stubs for 'rm', 'cp', etc. here.
-        // And the final 'default' case.
+            if (!targetNmapArg) {
+                output = 'Nmap: You must specify a target host.\nUsage: nmap [options] <target>\n';
+                break;
+            }
 
+            const hostData = findHostInNetwork(targetNmapArg);
+            if (!hostData) {
+                output = `Failed to resolve "${targetNmapArg}".\nNmap done: 1 IP address (0 hosts up) scanned in 0.01 seconds\n`;
+                break;
+            }
+
+            output = `Starting Nmap 7.92 ( https://nmap.org ) at ${new Date().toUTCString()}\n`;
+            output += `Nmap scan report for ${hostData.name} (${(hostData.ips && hostData.ips[0]) || 'unknown-ip'})\n`;
+            output += `Host is up (0.001s latency).\n`;
+
+            let openPortsFound = [];
+            if (hostData.openPorts && hostData.openPorts.length > 0) {
+                hostData.openPorts.forEach(portInfo => {
+                    if (portsToScan.length === 0 || portsToScan.includes(portInfo.port)) {
+                        let line = `${String(portInfo.port).padEnd(5)}/tcp open  ${(portInfo.service || 'unknown').padEnd(10)}`;
+                        if (showVersion && portInfo.banner) {
+                            line += ` ${portInfo.banner}`;
+                        }
+                        openPortsFound.push(line);
+                    }
+                });
+            }
+
+            if (openPortsFound.length > 0) {
+                output += `Not shown: ${1000 - openPortsFound.length} closed ports\n`; // Simulated total ports
+                output += `PORT     STATE SERVICE  ${showVersion ? 'VERSION' : ''}\n`;
+                output += openPortsFound.join('\n') + '\n';
+            } else {
+                output += `All ${portsToScan.length > 0 ? portsToScan.length : 1000} scanned ports on ${hostData.name} are closed.\n`;
+            }
+            output += `\nNmap done: 1 IP address (1 host up) scanned in 0.50 seconds\n`;
+            break;
+        // TODO: Implement other commands as needed: rm, cp, mv, find, ps, kill, systemctl, tar, unzip,
+        // ping, ssh, scp, wget, curl, hostname, ifconfig, ip, netstat, traceroute, nslookup, dig
+        
+        case 'rm': case 'cp': case 'mv': case 'find': case 'ps': case 'kill': case 'systemctl':
+        case 'tar': case 'unzip': case 'ping': case 'ssh': case 'scp': case 'wget': case 'curl':
+        case 'hostname': case 'ifconfig': case 'ip': case 'netstat': case 'traceroute':
+        case 'nslookup': case 'dig':
+            output = `${baseCmd}: Command logic not yet fully implemented in this simulation.\n`;
+            if (commandDefinitions[baseCmd] && commandDefinitions[baseCmd].usage) {
+                output += `Usage: ${commandDefinitions[baseCmd].usage}\n`;
+            }
+            break;
+            
         default:
-             if (commandDefinitions[baseCmd]) output = `${baseCmd}: Command logic not yet implemented here. Please ensure all cases are present.\n`;
+             if (commandDefinitions[baseCmd]) output = `${baseCmd}: Command logic not yet fully implemented here. Refer to full command list.\n`;
              else output = `${baseCmd}: command not found\n`;
             break;
     }
@@ -594,30 +650,66 @@ function getCompletionCandidates(buffer, currentCwdArray) {
     const lastPartTyped = parts.length > 0 ? parts[parts.length - 1] : "";
     const isNewArgument = buffer.endsWith(' ') || buffer === "" || parts.length === 0;
     const commandPart = parts[0];
-    if (parts.length <= 1 && !isNewArgument) return Object.keys(commandDefinitions).filter(cmd => cmd.startsWith(lastPartTyped)).sort();
+
+    // Command completion
+    if (parts.length <= 1 && !isNewArgument) {
+        return Object.keys(commandDefinitions).filter(cmd => cmd.startsWith(lastPartTyped)).sort();
+    }
+
     let pathToComplete = isNewArgument ? "" : lastPartTyped;
     let baseDirForCompletion = [...currentCwdArray];
     let pathPrefix = "";
-    if (pathToComplete.includes('/')) {
-        const pathSegments = pathToComplete.split('/'); const partialName = pathSegments.pop() || ""; 
-        pathPrefix = pathSegments.join('/') + (pathSegments.length > 0 ? '/' : '');
-        if (pathToComplete.startsWith('/')) baseDirForCompletion = [''];
-        baseDirForCompletion = resolvePath(baseDirForCompletion, pathSegments.join('/'));
-        pathToComplete = partialName;
-    } else if (!isNewArgument && parts.length > 1) {
-        if (commandPart === 'man' && parts.length === 2) return Object.keys(commandDefinitions).filter(cmd => cmd.startsWith(lastPartTyped)).sort();
+
+    // Handle options for the current command
+    const cmdDefForOptions = commandDefinitions[commandPart];
+    if (cmdDefForOptions && cmdDefForOptions.options && (isNewArgument || lastPartTyped.startsWith('-'))) {
+        let optionCandidates = [];
+        cmdDefForOptions.options.forEach(opt => { 
+            const mainFlag = opt.flag.split(',')[0].trim(); // e.g., -p from -p PORTS
+            if (mainFlag.startsWith(lastPartTyped)) {
+                 optionCandidates.push(mainFlag + (mainFlag.endsWith('S') || mainFlag.endsWith('E') ? '' : ' ')); // Add space unless it's like -sV where V is part of it
+            }
+        });
+        if (optionCandidates.length > 0) return optionCandidates.sort(); // Prioritize option completion if typing one
     }
-    const dirNode = findNode(simulatedState.fileSystem, baseDirForCompletion);
-    if (dirNode && dirNode.type === 'directory' && Array.isArray(dirNode.children)) {
-        if (!checkPermissions(simulatedState.session.user, dirNode, 'execute')) return [];
-        let candidates = dirNode.children.filter(child => child.name.startsWith(pathToComplete))
-            .map(child => { let comp = pathPrefix + child.name; if (child.type === 'directory') comp += '/'; else comp += ' '; return comp; });
-        const cmdDefForOptions = commandDefinitions[commandPart];
-        if (cmdDefForOptions && cmdDefForOptions.options && (isNewArgument || lastPartTyped.startsWith('-'))) {
-             cmdDefForOptions.options.forEach(opt => { 
-                const mainFlag = opt.flag.split(',')[0].trim();
-                if (mainFlag.startsWith(lastPartTyped)) candidates.push(mainFlag + ' '); 
-            });
-        } return candidates.sort();
-    } return [];
+    
+    // Path completion
+    if (commandPart && (commandPart !== 'man' || parts.length > 2)) { // Don't do path completion for man's first arg
+        if (pathToComplete.includes('/')) {
+            const pathSegments = pathToComplete.split('/'); 
+            const partialName = pathSegments.pop() || ""; 
+            pathPrefix = pathSegments.join('/') + (pathSegments.length > 0 ? '/' : '');
+            if (pathToComplete.startsWith('/')) baseDirForCompletion = ['']; // Absolute path
+            else baseDirForCompletion = [...currentCwdArray]; // Relative path, start from cwd
+
+            baseDirForCompletion = resolvePath(baseDirForCompletion, pathSegments.join('/'));
+            pathToComplete = partialName;
+        } else if (isNewArgument) { // if it's a new argument, complete from current dir
+             pathToComplete = ""; // complete everything in the dir
+        }
+        // else: completing current word which is not a path segment yet, e.g. "ls myf"
+
+        const dirNode = findNode(simulatedState.fileSystem, baseDirForCompletion);
+        if (dirNode && dirNode.type === 'directory' && Array.isArray(dirNode.children)) {
+            if (!checkPermissions(simulatedState.session.user, dirNode, 'execute') && baseDirForCompletion.join('/') !== simulatedState.session.cwd.join('/')) { // Allow completion in CWD even if no execute
+                 return [];
+            }
+            let pathCandidates = dirNode.children
+                .filter(child => child.name.startsWith(pathToComplete))
+                .map(child => { 
+                    let comp = pathPrefix + child.name; 
+                    if (child.type === 'directory') comp += '/'; 
+                    else comp += ' '; 
+                    return comp; 
+                });
+            return pathCandidates.sort();
+        }
+    }
+    
+    // Argument completion for specific commands (like 'man')
+    if (commandPart === 'man' && (parts.length === 2 || (parts.length === 1 && isNewArgument))) {
+        return Object.keys(commandDefinitions).filter(cmd => cmd.startsWith(lastPartTyped)).sort();
+    }
+
+    return [];
 }
