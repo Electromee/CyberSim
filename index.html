@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>CyberSim Web Terminal</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/xterm/css/xterm.css" />
+</head>
+<body>
+
+    <div id="game-container">
+        <div id="menu-container" class="page">
+            <h1>CyberSim</h1>
+            <p>Choisissez une mission pour commencer.</p>
+
+            <div id="level-menu-content">
+                <div class="level-category">
+                    <h2>Commandes Linux Basiques</h2>
+                    <ul class="level-list">
+                        <li data-level-id="linux_tutorial">Mission Tutoriel Linux</li>
+                        <li data-level-id="linux_exploration">Mission 1: Exploration Fichiers</li>
+                        <li data-level-id="linux_permissions_hidden">Mission 2: Secrets et Permissions</li>
+                        <li data-level-id="linux_file_hunt">Mission 3: La Chasse au Fichier</li>
+                        <li data-level-id="linux_config_find">Mission 4: Configuration Perdue</li>
+                    </ul>
+                </div>
+                <div class="level-category">
+                    <h2>Commandes Linux Avancées</h2>
+                    <ul class="level-list">
+                        <li data-level-id="linux_log_analysis">Mission 5: Analyse de Logs Web</li>
+                        <li data-level-id="linux_permission_escalation">Mission 6: Escalade de Privilèges (Script)</li>
+                        <li data-level-id="linux_find_large_files">Mission 7: Chasse aux Gros Fichiers</li>
+                        <li data-level-id="linux_service_control">Mission 8: Contrôle des Services</li>
+                        <li data-level-id="linux_archive_hunt">Mission 9: Chasse à l'Archive Perdue</li>
+                    </ul>
+                </div>
+                <div class="level-category">
+                    <h2>Réseau</h2>
+                    <ul class="level-list">
+                        <li data-level-id="network_scan">Mission Net 1: Scan de Port</li>
+                        {/* <li data-level-id="network_ssh_brute">Mission Net 2: Bruteforce SSH (À créer)</li> */}
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div id="terminal-container" class="page hidden">
+            <div id="terminal-ui">
+                <div id="info-panel">
+                    <div id="level-info">
+                        <h3>Mission: <span id="level-title">Non chargée</span></h3>
+                        <p id="level-description">Aucune mission sélectionnée.</p>
+                    </div>
+                    <div id="objectives">
+                        <h3>Objectifs</h3>
+                        <ul id="objectives-list"></ul>
+                    </div>
+                    <div id="hints">
+                        <h3>Astuces</h3>
+                        <ul id="hints-list">
+                             <li>Utilisez 'help' pour voir les commandes disponibles.</li>
+                        </ul>
+                    </div>
+                     <div id="game-controls">
+                          <h3>Commandes du Jeu</h3>
+                          <p>Tapez 'menu' pour revenir au menu principal.</p>
+                          <p>Tapez 'resetLevel' pour recommencer la mission.</p>
+                     </div>
+                </div>
+                <div id="xterm-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/xterm/lib/xterm.js"></script>
+    <script src="https://unpkg.com/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

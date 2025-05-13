@@ -1,0 +1,40 @@
+/* styles.css */
+html, body { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #1e1e1e; color: #ffffff; font-family: monospace; overflow: hidden; }
+#game-container { width: 100%; height: 100%; position: relative; display: flex; flex-direction: column; }
+.page { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; padding: 20px; box-sizing: border-box; background-color: #1e1e1e; overflow-y: auto; }
+.page.hidden { display: none !important; }
+
+#menu-container { justify-content: center; text-align: center; }
+#menu-container h1 { color: #0F0; margin-bottom: 20px; font-size: 2.5em; }
+#menu-container p { margin-bottom: 30px; font-size: 1.1em; }
+#level-menu-content { width: 90%; max-width: 700px; margin-top: 20px; text-align: left; max-height: calc(100vh - 220px); overflow-y: auto; padding: 15px; box-sizing: border-box; border: 1px solid #333; border-radius: 8px; scrollbar-width: thin; scrollbar-color: #0F0 #333; }
+#level-menu-content::-webkit-scrollbar { width: 10px; }
+#level-menu-content::-webkit-scrollbar-track { background: #2a2a2a; border-radius: 10px; }
+#level-menu-content::-webkit-scrollbar-thumb { background-color: #0F0; border-radius: 10px; border: 2px solid #2a2a2a; }
+.level-category { margin-bottom: 30px; }
+.level-category h2 { color: #00FFFF; margin-bottom: 15px; border-bottom: 1px solid #444; padding-bottom: 8px; font-size: 1.6em; }
+.level-category .level-list { list-style: none; padding: 0; margin: 0; }
+.level-category .level-list li { background-color: #2f2f2f; color: #0F0; padding: 12px 20px; margin-bottom: 10px; cursor: pointer; border: 1px solid #0F0; border-radius: 5px; transition: background-color 0.2s, color 0.2s, transform 0.1s; font-size: 1.1em; text-align: left; }
+.level-category .level-list li:hover { background-color: #0F0; color: #1e1e1e; transform: scale(1.02); }
+
+#terminal-container.page:not(.hidden) { padding: 0; overflow: hidden; }
+#terminal-ui { display: flex; flex-direction: row; width: 100%; height: 100%; padding: 10px; box-sizing: border-box; overflow: hidden; }
+#info-panel { width: 320px; min-width: 280px; max-width: 400px; background-color: #282828; color: #f0f0f0; padding: 15px; margin-right: 10px; border-radius: 8px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #00FFFF #282828; box-sizing: border-box; height: calc(100% - 0px); display: flex; flex-direction: column; border: 1px solid #444; }
+#info-panel::-webkit-scrollbar { width: 8px; }
+#info-panel::-webkit-scrollbar-track { background: #282828; border-radius: 10px; }
+#info-panel::-webkit-scrollbar-thumb { background-color: #00FFFF; border-radius: 10px; border: 2px solid #282828; }
+#info-panel h3 { color: #0F0; margin-top: 0; margin-bottom: 10px; border-bottom: 1px solid #444; padding-bottom: 5px; font-size: 1.2em;}
+#info-panel > div { margin-bottom: 20px; } #info-panel > div:last-child { margin-bottom: 0; }
+#level-info p { font-size: 0.95em; line-height: 1.5; color: #d0d0d0; word-wrap: break-word; }
+#objectives ul, #hints ul { list-style: none; padding: 0; margin: 0; }
+#objectives li, #hints li { margin-bottom: 8px; padding-left: 20px; position: relative; font-size: 0.95em; color: #f0f0f0; word-wrap: break-word; line-height: 1.4; }
+#objectives li::before { content: '\25B8'; /* Triangle bullet */ color: #0F0; font-weight: bold; position: absolute; left: 0; top: 1px; }
+#objectives li.completed { text-decoration: line-through; color: #888; }
+#objectives li.completed::before { content: '\2714'; color: #0F0; /* Checkmark */ }
+#hints li::before { content: '\2139'; color: #00FFFF; font-weight: bold; position: absolute; left: 0; top: 1px; }
+#game-controls { margin-top: auto; padding-top: 15px; border-top: 1px solid #444; }
+#game-controls p { font-size: 0.9em; margin-bottom: 5px; color: #c0c0c0; }
+#xterm-container { flex-grow: 1; background-color: #1e1e1e; padding: 0; box-sizing: border-box; border-radius: 5px; height: 100%; overflow: hidden; border: 1px solid #333; }
+.xterm { height: 100% !important; width: 100% !important; padding: 10px; box-sizing: border-box; }
+.xterm .xterm-viewport { width: 100% !important; overflow-y: scroll !important; /* Always allow xterm's viewport to scroll */ }
+.xterm .xterm-screen { width: 100% !important; } /* Ensure screen canvas takes full width */
