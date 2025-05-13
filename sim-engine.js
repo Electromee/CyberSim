@@ -120,18 +120,24 @@ self.onmessage = async ({ data }) => {
             const baseCmd = data.command.trim().split(/\s+/)[0];
             const clientCmds = ['clear', 'menu', 'resetLevel']; 
             if (simulatedState.currentLevel && !clientCmds.includes(baseCmd)) {
-                checkLevelObjectives(result.output); // MODIFIED: Pass command output
+                checkLevelObjectives(result.output);
             }
             break;
-        case 'getCompletionCandidates':
-            self.postMessage({ type: 'completionCandidates', buffer: data.buffer, candidates: getCompletionCandidates(data.buffer, data.cwd || simulatedState.session.cwd) });
+        case 'getCompletionCandidates': // data includes buffer, cursorPos, cwd
+            const candidatesResult = getCompletionCandidates(data.buffer, data.cursorPos, data.cwd || simulatedState.session.cwd);
+            self.postMessage({ 
+                type: 'completionCandidates', 
+                candidates: candidatesResult.candidates,
+                prefixLength: candidatesResult.prefixLength, // For app.js to replace correctly
+                isPathCompletion: candidatesResult.isPathCompletion, // For app.js to handle space
+                segmentToReplace: candidatesResult.segmentToReplace // For app.js path completion logic
+            });
             break;
         case 'resetLevel':
             if (simulatedState.currentLevel) {
                 await loadLevel(simulatedState.currentLevel.id);
                 self.postMessage({ type: 'output', output: 'Niveau réinitialisé.\n', speed: 0, newPrompt: buildPromptString(simulatedState.session), simulatedCwd: [...simulatedState.session.cwd] });
-                // After reset, also check objectives in case initial state fulfills some
-                checkLevelObjectives(); // Check objectives on reset
+                checkLevelObjectives();
             } else { self.postMessage({ type: 'output', output: 'Aucun niveau à réinitialiser.\n', speed: 0, newPrompt: '$ ', simulatedCwd: [''] }); }
             break;
         default: console.warn('Worker: Unhandled type', data.type, data);
@@ -171,7 +177,6 @@ async function loadLevel(levelId) {
         simulatedState.session.groups = simulatedState.session.groups || [defaultUser === 'root' ? 'root' : defaultUser, 'users'];
         
         console.log(`Level "${levelId}" loaded successfully.`);
-        // Check objectives after loading, in case initial state fulfills some
         checkLevelObjectives();
 
     } catch (error) { 
@@ -180,14 +185,12 @@ async function loadLevel(levelId) {
     }
 }
 
-// MODIFIED: Added lastCommandOutput parameter with a default value
 function checkLevelObjectives(lastCommandOutput = null) { 
     if (!simulatedState.currentLevel || !Array.isArray(simulatedState.currentLevel.objectives)) return;
     simulatedState.currentLevel.objectives.forEach(obj => {
         if (!obj || typeof obj.check !== 'function') { console.warn("Invalid objective found in level config:", obj); return; }
         if (!simulatedState.objectivesCompleted.includes(obj.id)) {
             try {
-                // MODIFIED: Pass lastCommandOutput to the check function
                 if (obj.check(JSON.parse(JSON.stringify(simulatedState)), lastCommandOutput)) { 
                     simulatedState.objectivesCompleted.push(obj.id);
                     self.postMessage({ type: 'objectiveComplete', objectiveId: obj.id, message: obj.message || 'Objectif atteint !' });
@@ -321,7 +324,7 @@ function runCommand(cmdStr) {
     if (!baseCmd) return { output, speed };
     const cmdDef = commandDefinitions[baseCmd];
 
-    if (args.includes('--help')) { // Simplified help check for any command
+    if (args.includes('--help')) {
         if (cmdDef) {
             output = `Usage: ${cmdDef.usage}\n${cmdDef.description}\n`;
             if (cmdDef.options && Array.isArray(cmdDef.options)) {
@@ -329,15 +332,12 @@ function runCommand(cmdStr) {
                 cmdDef.options.forEach(o => { output += `  ${o.flag}\n${simpleIndent(o.description,1)}\n`; });
             }
             return { output, speed };
-        } else {
-            // If --help on a non-defined command, could fall through to "command not found" or show generic help
         }
     }
     
     switch (baseCmd) {
         case 'help':
             if (args.length > 0 && commandDefinitions[args[0]]) {
-                 // Use the --help logic from above by re-crafting the call
                  const helpCmdDef = commandDefinitions[args[0]];
                  output = `Usage: ${helpCmdDef.usage}\n${helpCmdDef.description}\n`;
                  if (helpCmdDef.options && Array.isArray(helpCmdDef.options)) {
@@ -567,7 +567,7 @@ function runCommand(cmdStr) {
             break;
         case 'man':
             if (args.length === 0) { output = "What manual page do you want?\n"; break; }
-            const manCmdName = args[0]; const manDefResolved = commandDefinitions[manCmdName]; // Use a different var name
+            const manCmdName = args[0]; const manDefResolved = commandDefinitions[manCmdName];
             if (manDefResolved) {
                 output = `${manCmdName.toUpperCase()}(1) User Commands ${manCmdName.toUpperCase()}(1)\n\nNAME\n    ${manCmdName} - ${manDefResolved.description}\n\nSYNOPSIS\n    ${manDefResolved.usage}\n`;
                 if (manDefResolved.options && manDefResolved.options.length > 0) {
@@ -577,7 +577,7 @@ function runCommand(cmdStr) {
             } else output = `No manual entry for ${manCmdName}\n`;
             break;
         case 'nmap':
-            const targetNmapArg = args.find(arg => !arg.startsWith('-') && arg !== '-sV'); // -sV is an option, not a target
+            const targetNmapArg = args.find(arg => !arg.startsWith('-') && arg !== '-sV');
             const showVersion = args.includes('-sV');
             let portsToScan = [];
             const pOptionIndex = args.indexOf('-p');
@@ -614,7 +614,7 @@ function runCommand(cmdStr) {
             }
 
             if (openPortsFound.length > 0) {
-                output += `Not shown: ${1000 - openPortsFound.length} closed ports\n`; // Simulated total ports
+                output += `Not shown: ${1000 - openPortsFound.length} closed ports\n`;
                 output += `PORT     STATE SERVICE  ${showVersion ? 'VERSION' : ''}\n`;
                 output += openPortsFound.join('\n') + '\n';
             } else {
@@ -622,8 +622,6 @@ function runCommand(cmdStr) {
             }
             output += `\nNmap done: 1 IP address (1 host up) scanned in 0.50 seconds\n`;
             break;
-        // TODO: Implement other commands as needed: rm, cp, mv, find, ps, kill, systemctl, tar, unzip,
-        // ping, ssh, scp, wget, curl, hostname, ifconfig, ip, netstat, traceroute, nslookup, dig
         
         case 'rm': case 'cp': case 'mv': case 'find': case 'ps': case 'kill': case 'systemctl':
         case 'tar': case 'unzip': case 'ping': case 'ssh': case 'scp': case 'wget': case 'curl':
@@ -643,73 +641,95 @@ function runCommand(cmdStr) {
     return { output, speed };
 }
 
-
-function getCompletionCandidates(buffer, currentCwdArray) {
-    const trimmedBuffer = buffer.trimStart();
-    const parts = trimmedBuffer.split(/\s+/).filter(p => p.length > 0);
-    const lastPartTyped = parts.length > 0 ? parts[parts.length - 1] : "";
-    const isNewArgument = buffer.endsWith(' ') || buffer === "" || parts.length === 0;
-    const commandPart = parts[0];
-
-    // Command completion
-    if (parts.length <= 1 && !isNewArgument) {
-        return Object.keys(commandDefinitions).filter(cmd => cmd.startsWith(lastPartTyped)).sort();
-    }
-
-    let pathToComplete = isNewArgument ? "" : lastPartTyped;
-    let baseDirForCompletion = [...currentCwdArray];
-    let pathPrefix = "";
-
-    // Handle options for the current command
-    const cmdDefForOptions = commandDefinitions[commandPart];
-    if (cmdDefForOptions && cmdDefForOptions.options && (isNewArgument || lastPartTyped.startsWith('-'))) {
-        let optionCandidates = [];
-        cmdDefForOptions.options.forEach(opt => { 
-            const mainFlag = opt.flag.split(',')[0].trim(); // e.g., -p from -p PORTS
-            if (mainFlag.startsWith(lastPartTyped)) {
-                 optionCandidates.push(mainFlag + (mainFlag.endsWith('S') || mainFlag.endsWith('E') ? '' : ' ')); // Add space unless it's like -sV where V is part of it
-            }
-        });
-        if (optionCandidates.length > 0) return optionCandidates.sort(); // Prioritize option completion if typing one
-    }
+// MODIFIED: getCompletionCandidates now accepts cursorPos
+function getCompletionCandidates(buffer, cursorPos, currentCwdArray) {
+    // Determine the part of the buffer we are trying to complete
+    // This is the text from the start of the current "word" up to the cursor
+    const textToCompleteMatch = buffer.substring(0, cursorPos).match(/[^ ]*$/);
+    const textToComplete = textToCompleteMatch ? textToCompleteMatch[0] : "";
     
-    // Path completion
-    if (commandPart && (commandPart !== 'man' || parts.length > 2)) { // Don't do path completion for man's first arg
-        if (pathToComplete.includes('/')) {
-            const pathSegments = pathToComplete.split('/'); 
-            const partialName = pathSegments.pop() || ""; 
-            pathPrefix = pathSegments.join('/') + (pathSegments.length > 0 ? '/' : '');
-            if (pathToComplete.startsWith('/')) baseDirForCompletion = ['']; // Absolute path
-            else baseDirForCompletion = [...currentCwdArray]; // Relative path, start from cwd
+    const bufferTrimmedStart = buffer.trimStart();
+    const parts = bufferTrimmedStart.split(/\s+/);
+    const currentWordIndex = buffer.substring(0, cursorPos).split(/\s+/).length -1;
+    
+    let candidates = [];
+    let prefixLength = textToComplete.length; // How much of the current word to replace
+    let isPathCompletion = false;
+    let segmentToReplace = textToComplete; // For app.js path replacement
 
-            baseDirForCompletion = resolvePath(baseDirForCompletion, pathSegments.join('/'));
-            pathToComplete = partialName;
-        } else if (isNewArgument) { // if it's a new argument, complete from current dir
-             pathToComplete = ""; // complete everything in the dir
-        }
-        // else: completing current word which is not a path segment yet, e.g. "ls myf"
-
-        const dirNode = findNode(simulatedState.fileSystem, baseDirForCompletion);
-        if (dirNode && dirNode.type === 'directory' && Array.isArray(dirNode.children)) {
-            if (!checkPermissions(simulatedState.session.user, dirNode, 'execute') && baseDirForCompletion.join('/') !== simulatedState.session.cwd.join('/')) { // Allow completion in CWD even if no execute
-                 return [];
-            }
-            let pathCandidates = dirNode.children
-                .filter(child => child.name.startsWith(pathToComplete))
-                .map(child => { 
-                    let comp = pathPrefix + child.name; 
-                    if (child.type === 'directory') comp += '/'; 
-                    else comp += ' '; 
-                    return comp; 
-                });
-            return pathCandidates.sort();
+    // If cursor is at the beginning of a new word (or empty buffer) or completing the first word
+    if (currentWordIndex === 0 || (parts.length > 0 && cursorPos <= parts[0].length && buffer.charAt(cursorPos) !== ' ')) {
+        candidates = Object.keys(commandDefinitions)
+            .filter(cmd => cmd.startsWith(textToComplete))
+            .map(cmd => cmd + " "); // Add space after command completion
+        if (candidates.length > 0) {
+            return { candidates, prefixLength, isPathCompletion: false, segmentToReplace: textToComplete };
         }
     }
-    
-    // Argument completion for specific commands (like 'man')
-    if (commandPart === 'man' && (parts.length === 2 || (parts.length === 1 && isNewArgument))) {
-        return Object.keys(commandDefinitions).filter(cmd => cmd.startsWith(lastPartTyped)).sort();
-    }
 
-    return [];
+    // If we have a command typed
+    const commandName = parts[0];
+    const cmdDef = commandDefinitions[commandName];
+
+    if (cmdDef) {
+        // Option completion: if current word starts with '-'
+        if (textToComplete.startsWith('-')) {
+            if (cmdDef.options) {
+                candidates = cmdDef.options
+                    .map(opt => opt.flag.split(',')[0].trim()) // Get primary flag
+                    .filter(flag => flag.startsWith(textToComplete))
+                    .map(flag => flag + " ");
+                if (candidates.length > 0) {
+                    return { candidates, prefixLength, isPathCompletion: false, segmentToReplace: textToComplete };
+                }
+            }
+        } else if (parts.length > 1 && textToComplete !== "") { // Argument/Path completion
+            isPathCompletion = true; // Assume path completion for non-options for now
+            let baseDirForCompletion;
+            let partialPath = textToComplete;
+            let pathPrefix = "";
+
+            if (partialPath.includes('/')) {
+                const pathSegments = partialPath.split('/');
+                segmentToReplace = pathSegments.pop() || ""; // The part of the path we're actually completing
+                pathPrefix = pathSegments.join('/') + (pathSegments.length > 0 ? '/' : '');
+                
+                if (partialPath.startsWith('/')) { // Absolute path
+                    baseDirForCompletion = resolvePath([], pathSegments.join('/'));
+                } else { // Relative path
+                    baseDirForCompletion = resolvePath(currentCwdArray, pathSegments.join('/'));
+                }
+            } else { // No slashes, completing a name in current context directory
+                baseDirForCompletion = currentCwdArray;
+                segmentToReplace = partialPath;
+            }
+            prefixLength = segmentToReplace.length;
+
+
+            const dirNode = findNode(simulatedState.fileSystem, baseDirForCompletion);
+            if (dirNode && dirNode.type === 'directory' && Array.isArray(dirNode.children)) {
+                if (checkPermissions(simulatedState.session.user, dirNode, 'execute') || 
+                    (baseDirForCompletion.join('/') === currentCwdArray.join('/'))) { // Allow completion in CWD even if no 'x'
+                    candidates = dirNode.children
+                        .filter(child => child.name.startsWith(segmentToReplace))
+                        .map(child => {
+                            let comp = pathPrefix + child.name;
+                            if (child.type === 'directory') comp += '/';
+                            else comp += ' ';
+                            return comp;
+                        });
+                }
+            }
+             // Specific for 'man' command, complete command names as its argument
+            if (commandName === 'man' && currentWordIndex === 1) {
+                isPathCompletion = false; // It's command name completion
+                candidates = Object.keys(commandDefinitions)
+                    .filter(cmd => cmd.startsWith(textToComplete))
+                    .map(cmd => cmd + " ");
+            }
+        }
+    }
+    
+    candidates.sort();
+    return { candidates, prefixLength, isPathCompletion, segmentToReplace };
 }
